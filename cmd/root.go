@@ -9,11 +9,21 @@ import (
 )
 
 var (
-	dbPath string
+	dbPath   string
+	cliVersion = "dev"
+	cliCommit  = "none"
+	cliDate    = "unknown"
 )
 
+// SetVersion inyecta version, commit y date desde ldflags en el build
+func SetVersion(v, c, d string) {
+	cliVersion = v
+	cliCommit = c
+	cliDate = d
+}
+
 var rootCmd = &cobra.Command{
-	Use:   "q-secret",
+	Use:   "q-secrets",
 	Short: "Secret manager for local development",
 	Long: `q-secret manages API keys, tokens, and credentials
 in an encrypted SQLite database and injects them as
@@ -46,6 +56,15 @@ func Execute() {
 	}
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version number",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("q-secrets %s (commit: %s, built: %s)\n", cliVersion, cliCommit, cliDate)
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db-path", internal.DefaultDBPath, "Path to database file")
+	rootCmd.AddCommand(versionCmd)
 }

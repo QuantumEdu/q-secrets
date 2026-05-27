@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: q-secrets
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+scoops:
+  - name: q-secrets
+    homepage: "https://github.com/QuantumEdu/q-secrets"
+    description: "CLI secret manager - encrypt API keys and inject them as environment variables"
+    license: MIT
+    repository:
+      owner: QuantumEdu
+      name: scoop-q-secrets
+      branch: main
+    commit_msg_template: "Scoop update for {{ .ProjectName }} version {{ .Tag }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@quantumedu.dev
+    depends:
+      - age
+
+# Homebrew (para cuando haya usuarios macOS) - descomentar cuando sea necesario
+# brews:
+#   - name: q-secrets
+#     homepage: "https://github.com/QuantumEdu/q-secrets"
+#     description: "CLI secret manager - encrypt API keys and inject them as environment variables"
+#     license: MIT
+#     repository:
+#       owner: QuantumEdu
+#       name: homebrew-tap
+#       branch: main
+#     commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+#     commit_author:
+#       name: goreleaserbot
+#       email: bot@quantumedu.dev
+#     depends:
+#       - age
+#     install: |
+#       bin.install "q-secrets"

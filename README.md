@@ -1,187 +1,395 @@
-# q-secret
+# q-secrets
 
-**q-secret** es un CLI para gestionar e inyectar secretos (API keys, tokens, credenciales) de forma local, segura y transparente.
+**q-secrets** es un CLI para gestionar e inyectar secretos (API keys, tokens, credenciales) de forma local, segura y transparente.
 
 ```
-q-secret add pi ANTHROPIC_KEY=sk-ant-xxx
-q-secret run pi -- opencode   # inyecta la key y ejecuta opencode
+q-secrets add pi ANTHROPIC_KEY=sk-ant-xxx
+q-secrets run pi -- opencode   # inyecta la key y ejecuta opencode
 ```
 
-## Concepto
+---
 
-Los secrets se almacenan en una base de datos SQLite local. Los **valores** están encriptados con age (AES-256-GCM). Los **nombres** quedan visibles para poder listar proyectos sin desencriptar.
+## Tabla de contenidos
 
-El archivo `.db` podés sincronizarlo con OneDrive/Dropbox para backup y uso en múltiples máquinas, sin exponer los valores reales.
+- [¿Qué resuelve?](#qué-resuelve)
+- [Comparativa con alternativas](#comparativa-con-alternativas)
+- [Instalación](#instalación)
+- [Prerequisitos](#prerequisitos)
+- [Quick start](#quick-start)
+- [Uso completo](#uso-completo)
+- [Casos de uso](#casos-de-uso)
+- [Seguridad](#seguridad)
+- [Roadmap / Mejoras pendientes](#roadmap--mejoras-pendientes)
+- [Contribuir](#contribuir)
+- [Licencia](#licencia)
 
-## Prerequisitos
+---
 
-- [age](https://github.com/FiloSottile/age) ≥ 1.2 (o [rage](https://github.com/str4d/rage), la implementación en Rust)
-  ```bash
-  # Windows (scoop)
-  scoop install rage
-  # o
-  scoop install age
+## ¿Qué resuelve?
 
-  # macOS
-  brew install age
+Si trabajás con APIs, tenés un archivo `.env` con tus keys, o pegás tokens cada vez que ejecutás una herramienta, q-secrets resuelve:
 
-  # Linux
-  apt install age
-  ```
+| Problema | Cómo lo resuelve |
+|----------|------------------|
+| API keys en texto plano en el disco | Se encriptan con **age** (AES-256-GCM) |
+| Tener que desencriptar/borrar archivos cada sesión | `q-secrets run --` inyecta los valores como env vars |
+| Sincronizar secrets entre PCs | La DB encriptada se puede subir a OneDrive/Dropbox |
+| Recordar qué keys usás y para qué | Organización por **proyectos** con `list` |
+
+### ¿Qué NO cubre?
+
+- **No** es un gestor de contraseñas tipo Bitwarden (no tiene sharing multi-usuario)
+- **No** tiene servidor ni API REST
+- **No** hace rotación automática de secrets
+- **No** está pensado para CI/CD corporativo ni equipos grandes
+
+---
+
+## Comparativa con alternativas
+
+| Herramienta | Local | Cloud | Inyección | Gratis | Open Source |
+|-------------|-------|-------|-----------|--------|-------------|
+| **q-secrets** | ✅ 100% | ❌ | ✅ `run --` | ✅ | ✅ MIT |
+| **SOPS + age** | ✅ | ❌ | ❌ manual | ✅ | ✅ |
+| **1Password CLI** | ❌ | ✅ | ✅ `op run --` | ❌ ~$4/mes | ❌ |
+| **Bitwarden BWS** | ❌ | ✅ | ✅ `bws run --` | ✅ (limitado) | ✅ |
+| **Infisical** | ❌ | ✅/self-host | ✅ `infisical run --` | ✅ (limitado) | ✅ MIT |
+| **Windows Credential Manager** | ✅ | ❌ | ❌ scripting | ✅ | N/A |
+| **Env vars del SO** | ✅ | ❌ | ✅ automático | ✅ | N/A |
+
+**q-secrets está en el medio:** más automático que SOPS (no requiere decrypt manual), más liviano que Infisical (sin server), y completamente offline y open source.
+
+---
 
 ## Instalación
 
-```bash
-go install github.com/iquantum/q-secret@latest
+### Windows — Scoop (recomendado)
+
+```powershell
+scoop bucket add q-secrets https://github.com/QuantumEdu/scoop-q-secrets
+scoop install q-secrets/q-secrets
 ```
 
-O descargá el binario de [releases](https://github.com/iquantum/q-secret/releases).
+### go install
+
+```bash
+go install github.com/QuantumEdu/q-secrets@latest
+```
+
+### Binario (cualquier OS)
+
+Descargar desde [releases](https://github.com/QuantumEdu/q-secrets/releases):
+
+```bash
+# Linux / macOS
+curl -LO https://github.com/QuantumEdu/q-secrets/releases/latest/download/q-secrets_linux_amd64.tar.gz
+tar -xzf q-secrets_linux_amd64.tar.gz
+sudo mv q-secrets /usr/local/bin/
+
+# Windows (PowerShell)
+curl -LO https://github.com/QuantumEdu/q-secrets/releases/latest/download/q-secrets_windows_amd64.zip
+Expand-Archive q-secrets_windows_amd64.zip -DestinationPath .
+Move-Item q-secrets.exe C:\Users\iQuantum\bin\
+```
+
+### Build desde source
+
+```bash
+git clone https://github.com/QuantumEdu/q-secrets.git
+cd q-secrets
+go build -o q-secrets .
+```
+
+---
+
+## Prerequisitos
+
+- **[age](https://github.com/FiloSottile/age)** ≥ 1.2 (o **[rage](https://github.com/str4d/rage)**, la implementación en Rust)
+
+```powershell
+# Windows (Scoop)
+scoop install age
+
+# o también funciona con rage
+scoop install rage
+```
+
+```bash
+# macOS
+brew install age
+
+# Linux (Debian/Ubuntu)
+apt install age
+```
+
+Si instalaste `rage` en vez de `age`, q-secrets lo detecta automáticamente. No necesitás ambos.
+
+---
 
 ## Quick start
 
 ```bash
-# 1. Generar una age key (si no tenés una)
-age-keygen -o ~/.config/q-secret/keys.txt
+# 1. Generar una age key
+age-keygen -o ~/.config/q-secrets/keys.txt
+# Guardá esa key en Bitwarden/1Password!
 
-# 2. Inicializar la base de datos
-q-secret init --master-key "$(cat ~/.config/q-secret/keys.txt)"
+# 2. Inicializar la DB
+q-secrets init --master-key "$(cat ~/.config/q-secrets/keys.txt)"
 
 # 3. Agregar secrets a un proyecto
-q-secret add pi ANTHROPIC_KEY=sk-ant-xxx
+q-secrets add pi ANTHROPIC_KEY=sk-ant-xxx
 
 # 4. Ejecutar un programa con los secrets inyectados
-q-secret run pi -- opencode
+q-secrets run pi -- opencode
 
-# 5. Listar proyectos y secrets
-q-secret list
-q-secret list pi
+# 5. Listar
+q-secrets list
+q-secrets list pi
 ```
 
-## Uso
+---
 
-### `q-secret init`
+## Uso completo
 
-Inicializa la base de datos y configura la master key.
+### `q-secrets init`
 
 ```bash
-q-secret init [--master-key "AGE-SECRET-KEY-1..."] [--db-path ~/.config/q-secret/db]
+q-secrets init [--master-key "AGE-SECRET-KEY-1..."] [--db-path ~/.config/q-secrets/db] [--force]
 ```
 
-Sin `--master-key`, el CLI te guía: generar una nueva key o pegar una existente.
+- Sin `--master-key`: modo interactivo (generar key nueva o pegar existente)
+- Con `--master-key`: modo scripteable
+- `--force`: sobrescribe DB existente
+- `--db-path`: ruta custom de la DB
 
-### `q-secret add`
-
-Agrega uno o más secrets a un proyecto (se crea automáticamente si no existe).
+### `q-secrets add`
 
 ```bash
-q-secret add <project> <key>=<value> [...]
+q-secrets add <project> <key>=<value> [...]
 
-q-secret add pi ANTHROPIC_KEY=sk-ant-xxx
-q-secret add pi OPENAI_KEY=sk-open-xxx DB_URL=postgres://...
+q-secrets add pi ANTHROPIC_KEY=sk-ant-xxx
+q-secrets add pi OPENAI_KEY=sk-open-xxx DB_URL=postgres://...
+q-secrets add opencode OPENAI_KEY=sk-open-xxx
 ```
 
-### `q-secret list`
+El proyecto se crea automáticamente si no existe.
+
+### `q-secrets list`
 
 ```bash
-q-secret list              # lista proyectos
-q-secret list <project>    # lista keys del proyecto con valores truncados
+q-secrets list              # lista proyectos con cantidad de secrets
+q-secrets list <project>    # lista keys + valores truncados (últimos 4 chars)
 ```
 
-### `q-secret run`
-
-Ejecuta un comando con los secrets del proyecto inyectados como variables de entorno.
+### `q-secrets run`
 
 ```bash
-q-secret run <project> -- <command> [args...]
-
-q-secret run pi -- opencode
-q-secret run pi -- python app.py
-q-secret run pi -- docker-compose up
+q-secrets run <project> -- <command> [args...]
 ```
 
-**Importante:** los flags de `q-secret` van antes del `--`.
+**Flags antes de `--`, siempre:**
 
 ```bash
-q-secret run pi --db-path ~/mi.db -- opencode
+q-secrets run pi -- opencode
+q-secrets run pi --db-path ~/mi.db -- python app.py
+q-secrets run pi -- docker-compose up
+q-secrets run pi -- npm run dev
 ```
 
-### `q-secret get`
+El proceso hijo hereda stdin/stdout/stderr y las env vars del padre, más los secrets del proyecto.
 
-Obtiene el valor desencriptado de un secret. Útil para scripting.
+### `q-secrets get`
 
 ```bash
-q-secret get <project> <key>
+q-secrets get <project> <key>
 
-q-secret get pi ANTHROPIC_KEY | clip          # Windows
-q-secret get pi ANTHROPIC_KEY | pbcopy        # macOS
+q-secrets get pi ANTHROPIC_KEY | clip            # Windows
+q-secrets get pi ANTHROPIC_KEY | pbcopy          # macOS
+q-secrets get pi ANTHROPIC_KEY                   # stdout
 ```
 
-### `q-secret update`
+### `q-secrets update`
 
 ```bash
-q-secret update <project> <key> <new-value>
+q-secrets update <project> <key> <new-value>
 ```
 
-### `q-secret delete`
+### `q-secrets delete`
 
 ```bash
-q-secret delete <project> <key>     # borra un secret
-q-secret delete <project>           # borra todo el proyecto
+q-secrets delete <project> <key>     # borra un secret
+q-secrets delete <project>           # borra todo el proyecto (pide confirmación)
+q-secrets delete <project> --force   # borra sin confirmar
 ```
 
-## Cómo guardar la master key
+### `q-secrets export / import`
 
-La master key (age private key) se puede guardar:
+```bash
+# Exportar todos los secrets desencriptados a JSON
+q-secrets export > backup.json
+q-secrets export -o backup.json
 
-1. **En el keychain del SO** (próximamente: Windows Credential Manager, macOS Keychain, Linux libsecret)
-2. **En la variable de entorno `Q_SECRET_KEY`**
-   ```bash
-   # Lo ideal: agregar al perfil de la shell
-   export Q_SECRET_KEY="AGE-SECRET-KEY-1..."
+# Importar desde JSON (re-encripta)
+q-secrets import backup.json
+cat backup.json | q-secrets import
+```
 
+**⚠️ El export contiene los valores en texto plano.** Borrá el archivo después de usarlo.
 
-   # Windows PowerShell
-   $env:Q_SECRET_KEY = "AGE-SECRET-KEY-1..."
-   ```
+### `q-secrets version`
 
-3. **En un gestor de contraseñas** (Bitwarden, 1Password) y pegarla cuando se necesita
+```bash
+q-secrets version
+# q-secrets 0.1.0 (commit: abc123, built: 2026-05-26)
+```
+
+### `q-secrets completion`
+
+```bash
+# Bash
+source <(q-secrets completion bash)
+
+# Zsh
+source <(q-secrets completion zsh)
+
+# PowerShell
+q-secrets completion powershell | Out-String | Invoke-Expression
+```
+
+### Flags globales
+
+| Flag | Default | Descripción |
+|------|---------|-------------|
+| `--db-path` | `~/.config/q-secrets/q-secrets.db` | Ruta de la base de datos |
+| `-h, --help` | | Ayuda del comando |
+
+---
+
+## Casos de uso
+
+### 1. Desarrollador local con API keys
+
+```bash
+# Setup (una vez)
+q-secrets add openrouter OPENROUTER_API_KEY=sk-or-xxx
+q-secrets add openrouter OPENAI_API_KEY=sk-open-xxx
+
+# Usar (todos los días)
+q-secrets run openrouter -- opencode
+```
+
+### 2. Servicio con .env
+
+```bash
+# Agregar credenciales de DB
+q-secrets add app DB_HOST=localhost
+q-secrets add app DB_USER=admin
+q-secrets add app DB_PASSWORD=SuperSecret123
+
+# Levantar la app
+q-secrets run app -- docker-compose up
+
+# Sincronizar DB entre PCs
+# 1. Copiar ~/.config/q-secrets/q-secrets.db a OneDrive
+# 2. En la otra PC, copiar de OneDrive a ~/.config/q-secrets/
+# 3. Setear Q_SECRET_KEY con la misma master key
+```
+
+### 3. Scripting
+
+```bash
+# En un script bash
+export $(q-secrets get pi ANTHROPIC_KEY)
+./deploy.sh
+```
+
+---
+
+## Seguridad
+
+### Modelo de amenazas
+
+| Actor | Puede hacer | No puede hacer |
+|-------|------------|----------------|
+| Vos (usuario legítimo) | Todo | N/A |
+| Otro proceso mismo usuario | Leer env vars de procesos en `/proc/[pid]/environ` | Leer la DB sin la master key |
+| Alguien con acceso a tu disco | Ver proyectos y keys en la DB | Desencriptar valores sin la master key |
+| Alguien con tu sesión de Windows | Si la master key está en el keychain, puede desencriptar | — |
+
+### La master key
+
+- **La tenés que guardar vos** en Bitwarden, 1Password, un USB, o un papel
+- q-secrets la lee de la variable `Q_SECRET_KEY`
+- **Si la perdés, no hay recovery.** Hacé backup.
+- Si la DB se corrompe, perdés los secrets de ese snapshot. La master key te permite arrancar de nuevo.
+
+### Buenas prácticas
+
+1. **Respalda la master key** en un gestor de contraseñas antes de usarla
+2. **Nunca compartas la DB** sin haber encriptado los valores (están encriptados por defecto)
+3. **Borrá los archivos de export** inmediatamente después de usarlos
+4. **Usá `--db-path`** para tener DBs separadas por proyecto si querés
+5. Si trabajás en equipo, recordá que **q-secrets no tiene control de acceso** — es para uso individual
+
+---
+
+## Roadmap / Mejoras pendientes
+
+| Feature | Estado | Descripción |
+|---------|--------|-------------|
+| Keychain del SO | 🟡 Pendiente | Guardar master key en Windows Credential Manager, macOS Keychain, Linux libsecret |
+| `--watch` mode | 🟡 Pendiente | Reiniciar proceso hijito si cambian los secrets |
+| GitHub Actions | ✅ Listo | Build cross-platform automático con GoReleaser |
+| Scoop bucket | ✅ Listo | `scoop install q-secrets` |
+| Homebrew tap | 🟡 Pendiente | Para usuarios macOS |
+| Caché offline | 🟡 Pendiente | Cachear secrets para ejecución sin accesso a la DB |
+
+---
 
 ## Arquitectura
 
 ```
-q-secret/
-├── cmd/           # Comandos cobra
+q-secrets/
+├── cmd/           # Comandos (cobra)
 │   ├── root.go    # Raíz + flags globales
-│   ├── init.go    # q-secret init
-│   ├── add.go     # q-secret add
-│   ├── get.go     # q-secret get
-│   ├── list.go    # q-secret list
-│   ├── update.go  # q-secret update
-│   ├── delete.go  # q-secret delete
-│   └── run.go     # q-secret run
+│   ├── init.go    # q-secrets init
+│   ├── add.go     # q-secrets add
+│   ├── get.go     # q-secrets get
+│   ├── list.go    # q-secrets list
+│   ├── update.go  # q-secrets update + delete
+│   ├── export.go  # q-secrets export / import
+│   └── run.go     # q-secrets run
 ├── internal/
-│   ├── config.go  # Paths, defaults
-│   ├── db.go      # SQLite CRUD
-│   ├── crypto.go  # age encrypt/decrypt
+│   ├── config.go  # Paths por OS
+│   ├── db.go      # SQLite CRUD (modernc.org/sqlite)
+│   ├── crypto.go  # age encrypt/decrypt (soporta age y rage)
 │   ├── keychain.go# Master key management
 │   └── inject.go  # Env var injection + exec
 ├── main.go
-├── PRD.md
-├── SPECS.md
-├── tasks.md
-└── README.md
+└── [docs: PRD.md, SPECS.md, tasks.md]
 ```
 
-## Stack
+**Stack:**
+- **Go 1.26** — binario único, sin runtime
+- **modernc.org/sqlite** — SQLite puro Go, sin CGO
+- **age/rage** — encriptación AES-256-GCM
+- **cobra** — CLI framework
 
-| Componente | Tecnología |
-|-----------|------------|
-| Lenguaje | Go 1.23+ |
-| SQLite | modernc.org/sqlite (sin CGO) |
-| Crypto | age / rage (subproceso) |
-| CLI | spf13/cobra |
-| Keychain | Zalando/go-keyring (próximamente) |
+---
+
+## Contribuir
+
+```bash
+git clone https://github.com/QuantumEdu/q-secrets.git
+cd q-secrets
+go build ./...
+go test ./... -count=1 -timeout 60s
+```
+
+PRs bienvenidas. Mantené la cobertura de tests y seguí la estructura de `internal/` y `cmd/`.
+
+---
 
 ## Licencia
 
-MIT
+MIT © QuantumEdu
