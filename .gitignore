@@ -1,0 +1,7 @@
+*.exe
+*.db
+public.key
+q-secret
+bin/
+test.ps1
+.pi-lens/
