@@ -42,6 +42,11 @@ func OpenDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("setting WAL mode: %w", err)
 	}
 
+	// Foreign keys on (needed for DELETE CASCADE)
+	if _, err := conn.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		return nil, fmt.Errorf("enabling foreign keys: %w", err)
+	}
+
 	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {
 		return nil, fmt.Errorf("running migrations: %w", err)
