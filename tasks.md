@@ -16,15 +16,17 @@ Fase 1 (MVP)
 ├── T1.10 README + Makefile
 └── T1.11 Build cross-platform + verify
 
-Fase 2 (Completitud)
-├── T2.1  cmd/get.go — q-secret get
-├── T2.2  cmd/update.go — q-secret update
-├── T2.3  cmd/delete.go — q-secret delete
-├── T2.4  Tests: unit + integration para get/update/delete
-└── T2.5  Autocompletado bash/zsh/powershell (cobra built-in)
+Fase 2 (Completitud) — ✅ Completada
+├── T2.1  cmd/get.go — q-secret get ✅
+├── T2.2  cmd/update.go — q-secret update ✅
+├── T2.3  cmd/delete.go — q-secret delete ✅
+├── T2.4  Tests: 23 unit + integration para crypto, db, inject ✅
+├── T2.5  Autocompletado bash/zsh/powershell (cobra built-in) ✅
+├── T2.6  cmd/export.go — q-secret export (JSON decrypt) ✅
+└── T2.7  cmd/export.go — q-secret import (JSON re-encrypt) ✅
 
 Fase 3 (Polish)
-├── T3.1  q-secret export / import
+├── T3.1  Keychain del SO (Windows Credential Manager / macOS Keychain / Linux libsecret)
 ├── T3.2  --watch mode
 ├── T3.3  GitHub Actions para build + release
 └── T3.4  Homebrew tap / scoop bucket
