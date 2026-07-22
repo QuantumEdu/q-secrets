@@ -70,6 +70,13 @@ scoop bucket add q-secrets https://github.com/QuantumEdu/scoop-q-secrets
 scoop install q-secrets/q-secrets
 ```
 
+### macOS — Homebrew
+
+```bash
+brew tap QuantumEdu/tap
+brew install q-secrets
+```
+
 ### go install
 
 ```bash
@@ -198,6 +205,24 @@ q-secrets run pi -- npm run dev
 
 El proceso hijo hereda stdin/stdout/stderr y las env vars del padre, más los secrets del proyecto.
 
+#### Watch mode (`--watch`)
+
+```bash
+q-secrets run pi --watch -- myapp
+```
+
+Con `--watch`, q-secrets monitorea la base de datos por cambios. Si agregás, actualizás o borrás un secret mientras el proceso hijo está corriendo, lo reinicia automáticamente:
+
+```
+$ q-secrets run pi --watch -- myapp
+  ... (myapp running) ...
+  [agregás un secret nuevo en otra terminal]
+secrets changed, restarting...
+  ... (myapp reiniciado con los nuevos secrets) ...
+```
+
+Ideal para desarrollo: arrancás tu app con `--watch`, y cada vez que configurás una key nueva se reinicia sola sin que tengas que hacer nada.
+
 ### `q-secrets get`
 
 ```bash
@@ -319,9 +344,13 @@ export $(q-secrets get pi ANTHROPIC_KEY)
 ### La master key
 
 - **La tenés que guardar vos** en Bitwarden, 1Password, un USB, o un papel
-- q-secrets la lee de la variable `Q_SECRET_KEY`
+- q-secrets la lee de la variable `Q_SECRET_KEY` o del keychain del sistema operativo
+- En `q-secrets init`, la master key se guarda automáticamente en el keychain:
+  - **Windows:** Windows Credential Manager (service `q-secrets`)
+  - **macOS:** macOS Keychain (service `q-secrets`)
+  - **Linux:** libsecret / gnome-keyring (`secret-tool` debe estar corriendo)
+- `Q_SECRET_KEY` tiene prioridad: si está seteada, ignora el keychain (útil para CI y scripting)
 - **Si la perdés, no hay recovery.** Hacé backup.
-- Si la DB se corrompe, perdés los secrets de ese snapshot. La master key te permite arrancar de nuevo.
 
 ### Buenas prácticas
 
@@ -337,12 +366,12 @@ export $(q-secrets get pi ANTHROPIC_KEY)
 
 | Feature | Estado | Descripción |
 |---------|--------|-------------|
-| Keychain del SO | 🟡 Pendiente | Guardar master key en Windows Credential Manager, macOS Keychain, Linux libsecret |
-| `--watch` mode | 🟡 Pendiente | Reiniciar proceso hijito si cambian los secrets |
+| Keychain del SO | ✅ Listo | Guardar master key en Windows Credential Manager, macOS Keychain, Linux libsecret |
+| `--watch` mode | ✅ Listo | Reiniciar proceso hijo si cambian los secrets |
 | GitHub Actions | ✅ Listo | Build cross-platform automático con GoReleaser |
 | Scoop bucket | ✅ Listo | `scoop install q-secrets` |
-| Homebrew tap | 🟡 Pendiente | Para usuarios macOS |
-| Caché offline | 🟡 Pendiente | Cachear secrets para ejecución sin accesso a la DB |
+| Homebrew tap | ✅ Listo | `brew install q-secrets` para usuarios macOS |
+| Caché offline | 🟡 Pendiente | Cachear secrets para ejecución sin acceso a la DB |
 
 ---
 

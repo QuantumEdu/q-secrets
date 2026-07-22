@@ -2,6 +2,7 @@
 *.db
 public.key
 q-secret
+q-secrets
 bin/
 test.ps1
 .pi-lens/

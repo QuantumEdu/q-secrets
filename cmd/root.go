@@ -37,8 +37,9 @@ Quick start:
 
 Documentation: https://github.com/QuantumEdu/q-secrets`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Skip DB check for init command
-		if cmd.Name() == "init" {
+		// Commands that don't require a database
+		switch cmd.Name() {
+		case "init", "version", "completion", "help":
 			return nil
 		}
 

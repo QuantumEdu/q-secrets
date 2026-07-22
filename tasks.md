@@ -25,11 +25,11 @@ Fase 2 (Completitud) — ✅ Completada
 ├── T2.6  cmd/export.go — q-secret export (JSON decrypt) ✅
 └── T2.7  cmd/export.go — q-secret import (JSON re-encrypt) ✅
 
-Fase 3 (Polish)
-├── T3.1  Keychain del SO (Windows Credential Manager / macOS Keychain / Linux libsecret)
-├── T3.2  --watch mode
-├── T3.3  GitHub Actions para build + release
-└── T3.4  Homebrew tap / scoop bucket
+Fase 3 (Polish) — ✅ Completada
+├── T3.1  Keychain del SO (Windows Credential Manager / macOS Keychain / Linux libsecret) ✅
+├── T3.2  --watch mode ✅
+├── T3.3  GitHub Actions para build + release ✅
+└── T3.4  Homebrew tap / scoop bucket ✅
 ```
 
 ---
