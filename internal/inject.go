@@ -2,8 +2,6 @@ package internal
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 )
 
 // BuildEnv desencripta todos los secrets de un proyecto y los retorna como
@@ -24,6 +22,12 @@ func (db *DB) BuildEnv(project string) (map[string]string, error) {
 
 	envMap := make(map[string]string)
 	for _, s := range secrets {
+		if err := ValidateEnvName(s.KeyName); err != nil {
+			return nil, err
+		}
+		if _, exists := envMap[s.KeyName]; exists {
+			return nil, fmt.Errorf("duplicate environment variable %q", s.KeyName)
+		}
 		decrypted, err := Decrypt([]byte(s.ValueEnc), masterKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt %s: %w", s.KeyName, err)
@@ -34,34 +38,15 @@ func (db *DB) BuildEnv(project string) (map[string]string, error) {
 	return envMap, nil
 }
 
-// InjectEnv ejecuta un comando con secrets inyectados como variables de entorno.
-// project: nombre del proyecto del cual tomar los secrets
-// command: comando a ejecutar
-// args: argumentos del comando
+// InjectEnv is kept for callers that inherit the normal parent environment.
 func (db *DB) InjectEnv(project, command string, args []string) error {
 	envMap, err := db.BuildEnv(project)
 	if err != nil {
 		return err
 	}
-
-	// Construir comando con env vars inyectadas
-	cmd := exec.Command(command, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// Heredar env vars del padre + agregar secrets
-	cmd.Env = os.Environ()
-	for k, v := range envMap {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	cmd, err := NewChildCommand(envMap, command, args, false)
+	if err != nil {
+		return err
 	}
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-		return fmt.Errorf("executing command: %w", err)
-	}
-
-	return nil
+	return RunChild(cmd)
 }

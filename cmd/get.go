@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/QuantumEdu/q-secrets/internal"
+	"github.com/spf13/cobra"
 )
 
 var getCmd = &cobra.Command{
@@ -19,6 +19,12 @@ Examples:
 `,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		format, _ := cmd.Flags().GetString("output")
+		if format != "" {
+			if err := validateOutput(format, true); err != nil {
+				return err
+			}
+		}
 		project, key := args[0], args[1]
 
 		masterKey, err := internal.GetMasterKey()
@@ -42,11 +48,15 @@ Examples:
 			return fmt.Errorf("decrypting secret: %w", err)
 		}
 
-		fmt.Print(string(decrypted))
-		return nil
+		if format == "" {
+			_, err := cmd.OutOrStdout().Write(decrypted)
+			return err
+		}
+		return renderSecrets(cmd.OutOrStdout(), []exportSecret{{Project: project, Key: key, Value: string(decrypted)}}, format, true)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(getCmd)
+	getCmd.Flags().String("output", "", "Output format: json, env or table (default: raw value)")
 }

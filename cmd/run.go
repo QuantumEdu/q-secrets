@@ -7,15 +7,18 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"reflect"
 	"syscall"
 	"time"
 
+	"github.com/QuantumEdu/q-secrets/internal"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
-	"github.com/QuantumEdu/q-secrets/internal"
 )
 
 var runWatch bool
+var runCleanEnv bool
 
 var runCmd = &cobra.Command{
 	Use:   "run <project> -- <command> [args...]",
@@ -23,7 +26,7 @@ var runCmd = &cobra.Command{
 	Long: `Run a command with secrets from a project injected as environment variables.
 
 The secrets are decrypted, injected into the child process, and
-automatically cleaned up when the process exits.
+never include Q_SECRET_KEY. Values exist in child memory until it exits.
 
 Examples:
   q-secret run pi -- opencode
@@ -66,27 +69,25 @@ func runOnce(dbPath, project, command string, args []string) error {
 	if !exists {
 		projs, _ := db.ListProjects()
 		if len(projs) == 0 {
-			return errors.New("no projects found. Add one with: q-secret add <project> KEY=VALUE")
+			return errors.New("no projects found. Add one with: q-secret add <project> KEY --stdin")
 		}
 		return fmt.Errorf("project %q not found. Available projects: %v", project, projs)
 	}
 
-	return db.InjectEnv(project, command, args)
+	env, err := db.BuildEnv(project)
+	if err != nil {
+		return err
+	}
+	child, err := internal.NewChildCommand(env, command, args, runCleanEnv)
+	if err != nil {
+		return err
+	}
+	return internal.RunChild(child)
 }
 
-// runCommandWithEnv builds the environment and starts the child process with
-// cancellation support. Returns the command handle so the caller can signal it.
-func runCommandWithEnv(ctx context.Context, envMap map[string]string, command string, args []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	for k, v := range envMap {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	return cmd
+// runCommandWithEnv applies the same environment policy in watch and normal mode.
+func runCommandWithEnv(envMap map[string]string, command string, args []string) (*exec.Cmd, error) {
+	return internal.NewChildCommand(envMap, command, args, runCleanEnv)
 }
 
 // watchDBFile watches a file for write/create events and sends a signal on change.
@@ -96,7 +97,11 @@ func watchDBFile(ctx context.Context, dbPath string) (<-chan struct{}, error) {
 		return nil, fmt.Errorf("creating file watcher: %w", err)
 	}
 
-	if err := watcher.Add(dbPath); err != nil {
+	if _, err := os.Stat(dbPath); err != nil {
+		watcher.Close()
+		return nil, err
+	}
+	if err := watcher.Add(filepath.Dir(dbPath)); err != nil {
 		watcher.Close()
 		return nil, fmt.Errorf("watching db file %s: %w (is the DB initialized?)", dbPath, err)
 	}
@@ -113,7 +118,9 @@ func watchDBFile(ctx context.Context, dbPath string) (<-chan struct{}, error) {
 				if !ok {
 					return
 				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				base := filepath.Base(event.Name)
+				relevant := base == filepath.Base(dbPath) || base == filepath.Base(dbPath)+"-wal"
+				if relevant && (event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove)) {
 					select {
 					case changed <- struct{}{}:
 					default:
@@ -135,120 +142,88 @@ func watchDBFile(ctx context.Context, dbPath string) (<-chan struct{}, error) {
 func runWatchLoop(dbPath, project, command string, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// Handle Ctrl+C / SIGTERM
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
-	// Set up the file watcher
-	dbChanges, err := watchDBFile(ctx, dbPath)
+	defer signal.Stop(sigCh)
+	db, err := internal.OpenDB(dbPath)
 	if err != nil {
 		return err
 	}
-
-	// Debounce timer for rapid successive writes
-	var debounceTimer *time.Timer
-
+	defer db.Close()
+	changes, err := watchDBFile(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+	env, err := db.BuildEnv(project)
+	if err != nil {
+		return err
+	}
 	for {
-		db, err := internal.OpenDB(dbPath)
+		childCtx, stop := context.WithCancel(ctx)
+		child, err := runCommandWithEnv(env, command, args)
 		if err != nil {
+			stop()
 			return err
 		}
-
-		exists, err := db.ProjectExists(project)
-		if err != nil {
-			db.Close()
-			return err
-		}
-		if !exists {
-			db.Close()
-			projs, _ := db.ListProjects()
-			if len(projs) == 0 {
-				return errors.New("no projects found. Add one with: q-secret add <project> KEY=VALUE")
-			}
-			return fmt.Errorf("project %q not found. Available projects: %v", project, projs)
-		}
-
-		envMap, err := db.BuildEnv(project)
-		if err != nil {
-			db.Close()
-			return err
-		}
-		db.Close()
-
-		// Start child process with cancellation support
-		procCtx, procCancel := context.WithCancel(ctx)
-		proc := runCommandWithEnv(procCtx, envMap, command, args)
-
-		if err := proc.Start(); err != nil {
-			procCancel()
-			return fmt.Errorf("starting command: %w", err)
-		}
-
-		// Wait for exit
-		procDone := make(chan error, 1)
-		go func() {
-			procDone <- proc.Wait()
-		}()
-
-		select {
-		case err := <-procDone:
-			procCancel()
-			if err != nil && !errors.Is(err, context.Canceled) {
-				return err
-			}
-			return nil
-
-		case <-dbChanges:
-			// Terminate current process gracefully
-			procCancel()
-			if err := terminateProcess(proc); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to terminate process: %v\n", err)
-			}
-			<-procDone
-
-			// Debounce
-			if debounceTimer != nil {
-				debounceTimer.Stop()
-			}
-			debounceTimer = time.NewTimer(300 * time.Millisecond)
-
+		done := make(chan error, 1)
+		go func() { done <- internal.RunChildContext(childCtx, child) }()
+		restart := false
+		for !restart {
 			select {
-			case <-debounceTimer.C:
+			case err := <-done:
+				stop()
+				// A parent shutdown must not report success even if the child exits zero.
+				select {
+				case sig := <-sigCh:
+					return shutdownError(sig)
+				default:
+				}
+				return err
+			case sig := <-sigCh:
+				stop()
+				<-done
+				return shutdownError(sig)
+			case <-changes:
+				// WAL writes from other projects and unchanged values must not restart.
+				next, err := db.BuildEnv(project)
+				if err != nil {
+					stop()
+					<-done
+					return err
+				}
+				if reflect.DeepEqual(env, next) {
+					continue
+				}
+				stop()
+				<-done
+				timer := time.NewTimer(300 * time.Millisecond)
+				select {
+				case <-timer.C:
+				case sig := <-sigCh:
+					timer.Stop()
+					return shutdownError(sig)
+				}
+				env, err = db.BuildEnv(project)
+				if err != nil {
+					return err
+				}
 				fmt.Fprintln(os.Stderr, "secrets changed, restarting...")
-			case <-ctx.Done():
-				return nil
-			case <-dbChanges:
-				// Drain extra events during debounce
+				restart = true
 			}
-
-		case <-ctx.Done():
-			procCancel()
-			terminateProcess(proc)
-			<-procDone
-			return nil
 		}
 	}
 }
 
-// terminateProcess sends SIGTERM to the process group and falls back to SIGKILL.
-func terminateProcess(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return nil
+func shutdownError(sig os.Signal) error {
+	if sig == os.Interrupt {
+		return &internal.ExitStatus{Code: 130}
 	}
-	// Send to process group so children are also terminated
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-		// Fall back to direct signal
-		return cmd.Process.Signal(syscall.SIGTERM)
-	}
-	return nil
+	return &internal.ExitStatus{Code: 143}
 }
 
 func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().BoolVar(&runWatch, "watch", false, "Watch for secret changes and restart the child process")
+	runCmd.Flags().BoolVar(&runCleanEnv, "clean-env", false, "Inherit only PATH and essential Windows OS variables")
+	runCmd.Flags().BoolVar(&runCleanEnv, "no-inherit-env", false, "Alias for --clean-env")
 }

@@ -58,7 +58,7 @@ func SaveMasterKey(key string) error {
 
 	err := keyring.Set(serviceName, keychainKey, key)
 	if err != nil {
-		return fmt.Errorf("failed to save master key to system keychain: %w\n\nYour master key was NOT saved.\nSet the Q_SECRET_KEY environment variable instead:\n  export Q_SECRET_KEY=\"%s\"\n\nFor persistent keychain storage, install a backend:\n  Linux: apt install libsecret-1-0 gnome-keyring\n  macOS: built-in keychain\n  Windows: built-in credential manager", err, key)
+		return fmt.Errorf("failed to save master key to system keychain: %w; configure a keychain backend or provide Q_SECRET_KEY securely", err)
 	}
 
 	return nil

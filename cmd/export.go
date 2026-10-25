@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/QuantumEdu/q-secrets/internal"
+	"github.com/spf13/cobra"
 )
 
 // exportSecret es la estructura para exportar/importar secrets
@@ -26,9 +27,14 @@ Handle it carefully and delete after use.
 
 Examples:
   q-secret export > backup.json
-  q-secret export --output backup.json
+  q-secret export --file backup.json
+  q-secret export --project pi --output env
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		format, _ := cmd.Flags().GetString("output")
+		if err := validateOutput(format, true); err != nil {
+			return err
+		}
 		masterKey, err := internal.GetMasterKey()
 		if err != nil {
 			return err
@@ -45,7 +51,18 @@ Examples:
 			return err
 		}
 
-		var secrets []exportSecret
+		project, _ := cmd.Flags().GetString("project")
+		if project != "" {
+			exists, err := db.ProjectExists(project)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("project %q not found", project)
+			}
+			projects = []string{project}
+		}
+		secrets := make([]exportSecret, 0)
 
 		for _, proj := range projects {
 			projSecrets, err := db.ListSecrets(proj)
@@ -66,27 +83,26 @@ Examples:
 			}
 		}
 
-		if len(secrets) == 0 {
-			fmt.Println("No secrets to export.")
-			return nil
+		var data bytes.Buffer
+		if err := renderSecrets(&data, secrets, format, true); err != nil {
+			return err
 		}
-
-		data, err := json.MarshalIndent(secrets, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshaling JSON: %w", err)
-		}
-
-		outputPath, _ := cmd.Flags().GetString("output")
+		outputPath, _ := cmd.Flags().GetString("file")
 		if outputPath != "" {
-			if err := os.WriteFile(outputPath, data, 0600); err != nil {
-				return fmt.Errorf("writing file: %w", err)
+			// Refuse symlinks/existing files rather than retaining permissive modes.
+			file, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				return fmt.Errorf("creating export file: %w", err)
 			}
-			fmt.Printf("✓ Exported %d secrets to %s\n", len(secrets), outputPath)
-		} else {
-			fmt.Println(string(data))
+			_, writeErr := file.Write(data.Bytes())
+			closeErr := file.Close()
+			if writeErr != nil {
+				return writeErr
+			}
+			return closeErr
 		}
-
-		return nil
+		_, err = cmd.OutOrStdout().Write(data.Bytes())
+		return err
 	},
 }
 
@@ -142,6 +158,11 @@ Examples:
 		}
 		defer db.Close()
 
+		for _, secret := range secrets {
+			if err := internal.ValidateEnvName(secret.Key); err != nil {
+				return err
+			}
+		}
 		var imported int
 		for _, s := range secrets {
 			encrypted, err := internal.Encrypt([]byte(s.Value), publicKey)
@@ -160,27 +181,14 @@ Examples:
 }
 
 // readAllStdin lee todo de stdin hasta EOF
-func readAllStdin() ([]byte, error) {
-	var data []byte
-	buf := make([]byte, 4096)
-	for {
-		n, err := os.Stdin.Read(buf)
-		if n > 0 {
-			data = append(data, buf[:n]...)
-		}
-		if err != nil {
-			break
-		}
-	}
-	return data, nil
-}
+func readAllStdin() ([]byte, error) { return io.ReadAll(os.Stdin) }
 
 func init() {
 	rootCmd.AddCommand(exportCmd)
-	exportCmd.Flags().StringP("output", "o", "", "Output file path")
+	exportCmd.Flags().String("output", "json", "Output format: json, env or table")
+	exportCmd.Flags().StringP("file", "o", "", "Write a new plaintext file with mode 0600 (refuses existing files)")
+	exportCmd.Flags().String("project", "", "Export only this project")
 
 	rootCmd.AddCommand(importCmd)
 
-	// Registrar timestamp de exportación
-	_ = time.Now
 }

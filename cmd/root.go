@@ -1,15 +1,16 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/QuantumEdu/q-secrets/internal"
+	"github.com/spf13/cobra"
 )
 
 var (
-	dbPath   string
+	dbPath     string
 	cliVersion = "dev"
 	cliCommit  = "none"
 	cliDate    = "unknown"
@@ -23,15 +24,17 @@ func SetVersion(v, c, d string) {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "q-secrets",
-	Short: "Secret manager for local development",
+	Use:           "q-secrets",
+	Short:         "Secret manager for local development",
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	Long: `q-secret manages API keys, tokens, and credentials
 in an encrypted SQLite database and injects them as
 environment variables when running commands.
 
 Quick start:
   q-secret init                         # Initialize database
-  q-secret add pi ANTHROPIC_KEY=xxx     # Add a secret
+  q-secret add pi ANTHROPIC_KEY     # Add a secret
   q-secret list                         # List projects
   q-secret run pi -- myapp             # Run with injected secrets
 
@@ -53,6 +56,11 @@ Documentation: https://github.com/QuantumEdu/q-secrets`,
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		var child *internal.ExitStatus
+		if errors.As(err, &child) {
+			os.Exit(child.Code)
+		}
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
