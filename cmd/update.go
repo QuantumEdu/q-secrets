@@ -4,22 +4,37 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/QuantumEdu/q-secrets/internal"
+	"github.com/spf13/cobra"
 )
 
 var updateCmd = &cobra.Command{
-	Use:   "update <project> <key> <value>",
+	Use:   "update <project> <KEY> [--stdin]",
 	Short: "Update an existing secret",
-	Long: `Update the value of an existing secret.
-Fails if the secret doesn't exist (use add instead).
-
-Examples:
-  q-secret update pi ANTHROPIC_KEY sk-ant-new-key
-`,
-	Args: cobra.ExactArgs(3),
+	Long: `Update an existing secret using hidden terminal input or --stdin.
+Legacy update <project> <key> <value> requires --allow-argv.`,
+	Args: cobra.RangeArgs(2, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		project, key, value := args[0], args[1], args[2]
+		project, key := args[0], args[1]
+		inputArgs := args[1:]
+		if len(args) == 3 {
+			allowed, _ := cmd.Flags().GetBool("allow-argv")
+			if !allowed {
+				return fmt.Errorf("legacy value arguments require --allow-argv; prefer KEY --stdin")
+			}
+			inputArgs = []string{key + "=" + args[2]}
+		}
+		values, err := readSecretInput(cmd, inputArgs)
+		if err != nil {
+			return err
+		}
+		if len(values) != 1 {
+			return fmt.Errorf("update requires exactly one secret")
+		}
+		var value string
+		for name, secret := range values {
+			key, value = name, secret
+		}
 
 		publicKey, err := internal.ReadPublicKey()
 		if err != nil {
@@ -55,6 +70,9 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
+	updateCmd.Flags().Bool("stdin", false, "Read the exact secret value from stdin")
+	updateCmd.Flags().Bool("allow-argv", false, "Allow legacy secret values in argv")
+	updateCmd.MarkFlagsMutuallyExclusive("stdin", "allow-argv")
 }
 
 // deleteCmd

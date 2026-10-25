@@ -92,6 +92,9 @@ func (db *DB) CreateProject(name string) error {
 
 // UpsertSecret inserta o actualiza un secret
 func (db *DB) UpsertSecret(project, key string, valueEnc []byte) error {
+	if err := ValidateEnvName(key); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Asegurar que el proyecto existe

@@ -3,7 +3,7 @@
 **q-secrets** es un CLI para gestionar e inyectar secretos (API keys, tokens, credenciales) de forma local, segura y transparente.
 
 ```
-q-secrets add pi ANTHROPIC_KEY=sk-ant-xxx
+q-secrets add pi ANTHROPIC_KEY
 q-secrets run pi -- opencode   # inyecta la key y ejecuta opencode
 ```
 
@@ -31,7 +31,7 @@ Si trabajás con APIs, tenés un archivo `.env` con tus keys, o pegás tokens ca
 
 | Problema | Cómo lo resuelve |
 |----------|------------------|
-| API keys en texto plano en el disco | Se encriptan con **age** (AES-256-GCM) |
+| API keys en texto plano en el disco | Se encriptan con **age** (X25519 + ChaCha20-Poly1305) |
 | Tener que desencriptar/borrar archivos cada sesión | `q-secrets run --` inyecta los valores como env vars |
 | Sincronizar secrets entre PCs | La DB encriptada se puede subir a OneDrive/Dropbox |
 | Recordar qué keys usás y para qué | Organización por **proyectos** con `list` |
@@ -111,40 +111,21 @@ go build -o q-secrets .
 
 ## Prerequisitos
 
-- **[age](https://github.com/FiloSottile/age)** ≥ 1.2 (o **[rage](https://github.com/str4d/rage)**, la implementación en Rust)
-
-```powershell
-# Windows (Scoop)
-scoop install age
-
-# o también funciona con rage
-scoop install rage
-```
-
-```bash
-# macOS
-brew install age
-
-# Linux (Debian/Ubuntu)
-apt install age
-```
-
-Si instalaste `rage` en vez de `age`, q-secrets lo detecta automáticamente. No necesitás ambos.
+El binario incluye `filippo.io/age`: no necesita ejecutables age/rage ni acceso a red.
+Para compilar: Go 1.26.1 o superior. Mantiene el formato de cifrado age compatible
+con los secretos existentes. La master key sigue en el keychain del SO o `Q_SECRET_KEY`.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Generar una age key
-age-keygen -o ~/.config/q-secrets/keys.txt
-# Guardá esa key en Bitwarden/1Password!
-
-# 2. Inicializar la DB
-q-secrets init --master-key "$(cat ~/.config/q-secrets/keys.txt)"
+# 1. Inicializar la DB y generar la key en memoria
+q-secrets init
+# Respaldá la key que muestra init en tu gestor de contraseñas.
 
 # 3. Agregar secrets a un proyecto
-q-secrets add pi ANTHROPIC_KEY=sk-ant-xxx
+q-secrets add pi ANTHROPIC_KEY
 
 # 4. Ejecutar un programa con los secrets inyectados
 q-secrets run pi -- opencode
@@ -172,21 +153,31 @@ q-secrets init [--master-key "AGE-SECRET-KEY-1..."] [--db-path ~/.config/q-secre
 ### `q-secrets add`
 
 ```bash
-q-secrets add <project> <key>=<value> [...]
+q-secrets add <project> <KEY>            # prompt oculto en terminal
+q-secrets add <project> <KEY> --stdin    # valor exacto hasta EOF
 
-q-secrets add pi ANTHROPIC_KEY=sk-ant-xxx
-q-secrets add pi OPENAI_KEY=sk-open-xxx DB_URL=postgres://...
-q-secrets add opencode OPENAI_KEY=sk-open-xxx
+q-secrets add pi ANTHROPIC_KEY
+secret-source | q-secrets add pi OPENAI_KEY --stdin
+# Compatibilidad explícita; expone valores en argv e historial:
+q-secrets add pi --allow-argv KEY=VALUE OTHER=value
 ```
 
-El proyecto se crea automáticamente si no existe.
+El proyecto se crea automáticamente. `--stdin` conserva saltos de línea y permite
+valores vacíos; evitá `echo` si no querés guardar un salto final. `--stdin` y
+`--allow-argv` son excluyentes. Los nombres deben cumplir `[A-Za-z_][A-Za-z0-9_]*`;
+`Q_SECRET_KEY` está reservado, incluso si se intenta importarlo o inyectarlo desde
+una DB antigua. No se guardan nombres inválidos.
 
 ### `q-secrets list`
 
 ```bash
-q-secrets list              # lista proyectos con cantidad de secrets
-q-secrets list <project>    # lista keys + valores truncados (últimos 4 chars)
+q-secrets list                       # tabla de proyectos y nombres
+q-secrets list pi --output json      # metadatos, sin valores
 ```
+
+`list` nunca desencripta ni muestra fragmentos de secretos, tampoco en JSON.
+Para obtener valores, usá `get` o `export` explícitamente. `list --output env`
+se rechaza porque una lista de nombres no es una exportación de valores.
 
 ### `q-secrets run`
 
@@ -203,7 +194,28 @@ q-secrets run pi -- docker-compose up
 q-secrets run pi -- npm run dev
 ```
 
-El proceso hijo hereda stdin/stdout/stderr y las env vars del padre, más los secrets del proyecto.
+El proceso hijo hereda stdin/stdout/stderr. Los secretos reemplazan las variables
+heredadas con el mismo nombre, sin duplicados. `Q_SECRET_KEY` se elimina siempre.
+
+```bash
+q-secrets run pi --clean-env -- opencode
+q-secrets run pi --no-inherit-env -- python app.py
+```
+
+En modo limpio sólo se hereda `PATH`; en Windows también `SystemRoot`, `WINDIR`,
+`COMSPEC`, `PATHEXT`, `TEMP` y `TMP`. Los secretos del proyecto se agregan después.
+No se heredan HOME, credenciales del padre ni configuraciones proxy; si tu programa
+las necesita, usá el modo normal o configuralas en el proyecto deliberadamente.
+Los flags deben aparecer antes de `--`.
+
+Se conserva el código de salida del hijo. En Unix se reenvían INT/TERM/HUP;
+una terminación por señal devuelve `128 + señal`. La cancelación espera hasta
+3 segundos antes de forzar el cierre y recoge el proceso. Los hijos sin terminal
+usan un grupo de procesos para detener también descendientes. Los interactivos
+permanecen en el grupo de la terminal para poder leer stdin; la señal de terminal
+alcanza ese grupo, y las señales enviadas al wrapper se reenvían al hijo directo.
+Windows termina el hijo directo: no ofrece la misma propagación POSIX ni garantiza
+el cierre de descendientes.
 
 #### Watch mode (`--watch`)
 
@@ -211,7 +223,7 @@ El proceso hijo hereda stdin/stdout/stderr y las env vars del padre, más los se
 q-secrets run pi --watch -- myapp
 ```
 
-Con `--watch`, q-secrets monitorea la base de datos por cambios. Si agregás, actualizás o borrás un secret mientras el proceso hijo está corriendo, lo reinicia automáticamente:
+Con `--watch`, q-secrets monitorea la base de datos y su WAL de SQLite por cambios del proyecto. No reinicia por escrituras de otros proyectos ni por valores idénticos. Si agregás, actualizás o borrás un secret mientras el proceso hijo está corriendo, lo reinicia automáticamente:
 
 ```
 $ q-secrets run pi --watch -- myapp
@@ -236,7 +248,10 @@ q-secrets get pi ANTHROPIC_KEY                   # stdout
 ### `q-secrets update`
 
 ```bash
-q-secrets update <project> <key> <new-value>
+q-secrets update <project> <KEY>           # prompt oculto
+secret-source | q-secrets update <project> <KEY> --stdin
+# Sólo para compatibilidad:
+q-secrets update <project> <KEY> <new-value> --allow-argv
 ```
 
 ### `q-secrets delete`
@@ -252,14 +267,25 @@ q-secrets delete <project> --force   # borra sin confirmar
 ```bash
 # Exportar todos los secrets desencriptados a JSON
 q-secrets export > backup.json
-q-secrets export -o backup.json
+q-secrets export --file backup.json
+q-secrets export --project pi --output env
+q-secrets export --project pi --output table
 
 # Importar desde JSON (re-encripta)
 q-secrets import backup.json
 cat backup.json | q-secrets import
 ```
 
-**⚠️ El export contiene los valores en texto plano.** Borrá el archivo después de usarlo.
+`export --output` elige `json|env|table` (JSON por defecto); para archivos usá
+`--file` o `-o`. El archivo se crea con permisos 0600 y no sobrescribe archivos
+existentes ni sigue symlinks. El formato `env` usa comillas POSIX para conservar
+comillas, espacios y saltos de línea, y rechaza claves repetidas entre proyectos;
+usá `--project` para resolver ambigüedades. Import sólo acepta el JSON de export.
+
+`get --output json|env|table` usa esos mismos formatos. Sin `--output`, `get`
+conserva la salida raw, sin agregar un salto de línea.
+
+**El export contiene los valores en texto plano.** Borrá el archivo después de usarlo.
 
 ### `q-secrets version`
 
@@ -296,8 +322,8 @@ q-secrets completion powershell | Out-String | Invoke-Expression
 
 ```bash
 # Setup (una vez)
-q-secrets add openrouter OPENROUTER_API_KEY=sk-or-xxx
-q-secrets add openrouter OPENAI_API_KEY=sk-open-xxx
+q-secrets add openrouter OPENROUTER_API_KEY
+q-secrets add openrouter OPENAI_API_KEY
 
 # Usar (todos los días)
 q-secrets run openrouter -- opencode
@@ -307,9 +333,9 @@ q-secrets run openrouter -- opencode
 
 ```bash
 # Agregar credenciales de DB
-q-secrets add app DB_HOST=localhost
-q-secrets add app DB_USER=admin
-q-secrets add app DB_PASSWORD=SuperSecret123
+q-secrets add app DB_HOST
+q-secrets add app DB_USER
+q-secrets add app DB_PASSWORD
 
 # Levantar la app
 q-secrets run app -- docker-compose up
@@ -324,13 +350,19 @@ q-secrets run app -- docker-compose up
 
 ```bash
 # En un script bash
-export $(q-secrets get pi ANTHROPIC_KEY)
+q-secrets run pi -- myapp
 ./deploy.sh
 ```
 
 ---
 
 ## Seguridad
+
+No se escriben plaintext ni private keys en temporales durante cifrado o
+descifrado. Eso no garantiza borrado de memoria: Go, swap, core dumps y el propio
+proceso hijo pueden conservar copias. `init` muestra la nueva key para respaldarla;
+`init --master-key` sigue siendo una opción heredada que expone la key en argv.
+Usá el modo interactivo para generar una nueva key.
 
 ### Modelo de amenazas
 
@@ -391,7 +423,7 @@ q-secrets/
 ├── internal/
 │   ├── config.go  # Paths por OS
 │   ├── db.go      # SQLite CRUD (modernc.org/sqlite)
-│   ├── crypto.go  # age encrypt/decrypt (soporta age y rage)
+│   ├── crypto.go  # age en memoria, sin archivos temporales
 │   ├── keychain.go# Master key management
 │   └── inject.go  # Env var injection + exec
 ├── main.go
@@ -401,7 +433,7 @@ q-secrets/
 **Stack:**
 - **Go 1.26** — binario único, sin runtime
 - **modernc.org/sqlite** — SQLite puro Go, sin CGO
-- **age/rage** — encriptación AES-256-GCM
+- **filippo.io/age** — cifrado en memoria, compatible con age/rage
 - **cobra** — CLI framework
 
 ---
@@ -412,7 +444,12 @@ q-secrets/
 git clone https://github.com/QuantumEdu/q-secrets.git
 cd q-secrets
 go build ./...
-go test ./... -count=1 -timeout 60s
+go test -race ./... -count=1 -timeout 60s
+go vet ./...
+# Integración Linux: vault temporal aislado y secretos sintéticos
+python3 tests/cli_hardening.py ./q-secrets
+# Opcional: compatibilidad con el CLI oficial de age
+python3 tests/cli_hardening.py ./q-secrets /path/to/age
 ```
 
 PRs bienvenidas. Mantené la cobertura de tests y seguí la estructura de `internal/` y `cmd/`.

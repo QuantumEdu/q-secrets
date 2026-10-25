@@ -3,96 +3,57 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/QuantumEdu/q-secrets/internal"
+	"github.com/spf13/cobra"
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list [<project>]",
-	Short: "List projects or secrets",
-	Long: `List all projects, or list secrets within a project.
-
-Examples:
-  q-secret list              # List all projects
-  q-secret list pi           # List secrets in project "pi" with truncated values
-`,
-	Args: cobra.MaximumNArgs(1),
+	Short: "List project and secret names without decrypting values",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		format, _ := cmd.Flags().GetString("output")
+		if err := validateOutput(format, false); err != nil {
+			return err
+		}
 		db, err := internal.OpenDB(dbPath)
 		if err != nil {
 			return err
 		}
 		defer db.Close()
-
-		if len(args) == 0 {
-			// Listar proyectos
-			projects, err := db.ListProjects()
+		projects := args
+		if len(projects) == 0 {
+			projects, err = db.ListProjects()
 			if err != nil {
 				return err
 			}
-
-			if len(projects) == 0 {
-				fmt.Println("No projects found. Add one with: q-secret add <project> KEY=VALUE")
-				return nil
-			}
-
-			for _, p := range projects {
-				secrets, _ := db.ListSecrets(p)
-				fmt.Printf("%s (%d secrets)\n", p, len(secrets))
-				for _, s := range secrets {
-					fmt.Printf("  └─ %s\n", s.KeyName)
-				}
-			}
 		} else {
-			// Listar secrets de un proyecto
-			project := args[0]
-
-			exists, err := db.ProjectExists(project)
+			exists, err := db.ProjectExists(projects[0])
 			if err != nil {
 				return err
 			}
 			if !exists {
-				return fmt.Errorf("project %q not found", project)
+				return fmt.Errorf("project %q not found", projects[0])
 			}
-
+		}
+		records := make([]exportSecret, 0)
+		for _, project := range projects {
 			secrets, err := db.ListSecrets(project)
 			if err != nil {
 				return err
 			}
-
 			if len(secrets) == 0 {
-				fmt.Printf("Project %q has no secrets.\n", project)
-				return nil
+				records = append(records, exportSecret{Project: project})
 			}
-
-			// Desencriptar para mostrar valores truncados
-			masterKey, err := internal.GetMasterKey()
-			if err != nil {
-				// Si no hay master key, mostrar solo keys
-				for _, s := range secrets {
-					fmt.Printf("%s\n", s.KeyName)
-				}
-				return nil
-			}
-
-			for _, s := range secrets {
-				decrypted, err := internal.Decrypt([]byte(s.ValueEnc), masterKey)
-				if err != nil {
-					fmt.Printf("%s    (error decrypting)\n", s.KeyName)
-					continue
-				}
-				val := string(decrypted)
-				if len(val) > 4 {
-					val = val[:len(val)-4] + "***" + val[len(val)-4:]
-				}
-				fmt.Printf("%s    %s\n", s.KeyName, val)
+			for _, secret := range secrets {
+				records = append(records, exportSecret{Project: project, Key: secret.KeyName})
 			}
 		}
-
-		return nil
+		return renderSecrets(cmd.OutOrStdout(), records, format, false)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(listCmd)
+	listCmd.Flags().String("output", "table", "Output format: json or table (names only)")
 }

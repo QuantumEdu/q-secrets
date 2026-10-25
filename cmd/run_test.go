@@ -75,3 +75,25 @@ func TestWatchDBFile_CancelContext(t *testing.T) {
 		// No event — also fine, the watcher shut down
 	}
 }
+
+func TestWatchDBFile_DetectsWAL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vault.db")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	changed, err := watchDBFile(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+"-wal", []byte("change"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("WAL change missed")
+	}
+}

@@ -6,13 +6,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/QuantumEdu/q-secrets/internal"
+	"github.com/spf13/cobra"
 )
 
 var (
-	initForce      bool
-	initMasterKey  string
+	initForce     bool
+	initMasterKey string
 )
 
 var initCmd = &cobra.Command{
@@ -112,7 +112,7 @@ Example:
 		// 4. Guardar master key (non-fatal — keychain may not be available)
 		if err := internal.SaveMasterKey(masterKey); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Set Q_SECRET_KEY=%s in your environment to use q-secrets.\n", masterKey)
+			fmt.Fprintln(os.Stderr, "Provide the backed-up key via Q_SECRET_KEY to use q-secrets.")
 		}
 
 		// 5. Crear DB

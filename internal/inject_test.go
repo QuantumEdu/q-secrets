@@ -2,6 +2,7 @@ package internal
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -60,8 +61,8 @@ func TestReadWritePublicKey(t *testing.T) {
 }
 
 func TestInjectEnv(t *testing.T) {
-	if findAge() == "" || findKeygen() == "" {
-		t.Skip("age/rage or keygen not found in PATH")
+	if runtime.GOOS == "windows" {
+		t.Skip("printenv integration is Unix only")
 	}
 
 	orig := os.Getenv("Q_SECRET_KEY")
